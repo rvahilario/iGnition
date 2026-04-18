@@ -1,8 +1,14 @@
 import ctypes
 import ctypes.wintypes
+import logging
+import os
 import time
 
 import psutil
+
+from ignition.core.process_utils import normalize_windows_path
+
+logger = logging.getLogger(__name__)
 
 
 def _send_wm_close(pid: int) -> None:
@@ -102,6 +108,77 @@ def terminate_process(pid: int, *, timeout_seconds: float = 5.0) -> None:
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return
+
+
+def kill_by_exe_path(exe_path: str, grace_seconds: float) -> bool:
+    """Kill all running processes whose exe path matches exe_path.
+
+    Also matches processes with the same filename that live under the same root
+    directory as exe_path — this handles Squirrel/auto-updater launchers where
+    the real app runs from a versioned subdirectory (e.g. app-1.2.3\\App.exe).
+
+    Returns True if at least one matching process was found.
+    """
+    if not exe_path:
+        return False
+    try:
+        target = normalize_windows_path(exe_path)
+        target_name = os.path.basename(target)
+        target_dir = os.path.dirname(target)
+    except Exception:
+        return False
+
+    pids: list[int] = []
+    for proc in psutil.process_iter(attrs=["pid", "exe"]):
+        try:
+            exe = proc.info.get("exe")
+            if not exe:
+                continue
+            normalized = normalize_windows_path(exe)
+            if normalized == target:
+                pids.append(int(proc.info["pid"]))
+            elif (
+                os.path.basename(normalized) == target_name
+                and normalized.startswith(target_dir + os.sep)
+            ):
+                pids.append(int(proc.info["pid"]))
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            continue
+
+    for pid in pids:
+        try:
+            graceful_terminate_process(pid, grace_seconds)
+        except Exception:
+            logger.exception("kill_by_exe_path: error killing pid %s (%s)", pid, exe_path)
+
+    return bool(pids)
+
+
+def kill_by_process_name(process_name: str, grace_seconds: float) -> bool:
+    """Kill all running processes whose name matches process_name (case-insensitive).
+
+    Returns True if at least one matching process was found.
+    """
+    if not process_name:
+        return False
+    target = process_name.strip().lower()
+
+    pids: list[int] = []
+    for proc in psutil.process_iter(attrs=["pid", "name"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            if name == target:
+                pids.append(int(proc.info["pid"]))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    for pid in pids:
+        try:
+            graceful_terminate_process(pid, grace_seconds)
+        except Exception:
+            logger.exception("kill_by_process_name: error killing pid %s (%s)", pid, process_name)
+
+    return bool(pids)
 
 
 def terminate_process_tree(pid: int, *, timeout_seconds: float = 5.0) -> None:
