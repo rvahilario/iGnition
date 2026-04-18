@@ -410,6 +410,11 @@
           </div>
           <p class="form-hint">Wait this long for the app to close cleanly before force-killing it. 0 = instant kill.</p>
         </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">Track process name</label>
+          <input type="text" id="fm-track-process" class="input" placeholder="e.g. Kapps.exe (leave empty to use exe path)" />
+          <p class="form-hint">When this app uses a launcher that exits immediately, set the name of the real process to terminate. Visible in Task Manager.</p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn" id="app-modal-cancel">Cancel</button>

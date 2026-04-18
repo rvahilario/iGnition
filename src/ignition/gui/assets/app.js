@@ -628,6 +628,7 @@ function openAppModal(appId) {
     $('#fm-grace').value = '0';
     $('#fm-wait-for').value = '';
     $('#fm-wait-timeout').value = '30';
+    $('#fm-track-process').value = '';
     const _wtg = $('#fm-wait-timeout-group');
     if (_wtg) _wtg.style.display = 'none';
     openModal('app-modal-backdrop');
@@ -654,6 +655,7 @@ function openAppModal(appId) {
     $('#fm-grace').value   = a.shutdown_grace_seconds || 0;
     $('#fm-wait-for').value = a.wait_for_process || '';
     $('#fm-wait-timeout').value   = a.wait_timeout_seconds || 30;
+    $('#fm-track-process').value = a.track_process_name || '';
     const _wtg2 = $('#fm-wait-timeout-group');
     if (_wtg2) _wtg2.style.display = (a.wait_for_process || '').trim() ? '' : 'none';
     openModal('app-modal-backdrop');
@@ -681,6 +683,7 @@ $('#app-modal-save').addEventListener('click', async () => {
     shutdown_grace_seconds: parseFloat($('#fm-grace').value) || 0,
     wait_for_process:     $('#fm-wait-for').value.trim(),
     wait_timeout_seconds: parseFloat($('#fm-wait-timeout').value) || 30,
+    track_process_name:   $('#fm-track-process').value.trim(),
   };
 
   const json = JSON.stringify(appData);
