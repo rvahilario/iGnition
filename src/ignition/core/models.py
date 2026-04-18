@@ -21,6 +21,7 @@ class ManagedApp:
     enabled: bool = True
     wait_for_process: str = ""
     wait_timeout_seconds: float = 30.0
+    track_process_name: str = ""
 
     @classmethod
     def create(cls, *, name: str, executable_path: str) -> "ManagedApp":
@@ -44,6 +45,7 @@ class ManagedApp:
             "enabled": self.enabled,
             "wait_for_process": self.wait_for_process,
             "wait_timeout_seconds": self.wait_timeout_seconds,
+            "track_process_name": self.track_process_name,
         }
 
     @classmethod
@@ -65,6 +67,7 @@ class ManagedApp:
             enabled=bool(raw.get("enabled", True)),
             wait_for_process=str(raw.get("wait_for_process") or ""),
             wait_timeout_seconds=float(raw.get("wait_timeout_seconds") or 30.0),
+            track_process_name=str(raw.get("track_process_name") or ""),
         )
 
 
