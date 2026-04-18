@@ -18,8 +18,10 @@ from ignition.core.models import ManagedApp, Profile
 from ignition.core.process_killer import (
     graceful_terminate_process,
     graceful_terminate_process_tree,
+    kill_by_exe_path,
+    kill_by_process_name,
 )
-from ignition.core.process_utils import any_process_name_running
+from ignition.core.process_utils import any_process_name_running, find_pid_by_exe
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,8 @@ class IgnitionController:
         # Watchdog (crash-restart)
         self._watchdog_stop: threading.Event | None = None
         self._restart_counts: dict[str, int] = {}
+        # Apps removed by watchdog whose exe should still be killed on iRacing exit
+        self._dead_tracked_apps: list[RunningApp] = []
 
         self._monitor = IRacingMonitor(
             get_trigger_process_names=self._get_trigger_process_names,
@@ -238,6 +242,8 @@ class IgnitionController:
                         if app_id not in self._running:
                             continue
                         self._running.pop(app_id, None)
+                        if running.app.kill_on_iracing_exit and not running.app.restart_on_crash:
+                            self._dead_tracked_apps.append(running)
                     if not running.app.restart_on_crash:
                         self._log_event(
                             "error", running.app.name,
@@ -350,6 +356,8 @@ class IgnitionController:
         with self._lock:
             if app.app_id in self._running:
                 return
+            if not self._iracing_running:
+                return
 
         if app.wait_for_process:
             timeout = max(float(app.wait_timeout_seconds or 30.0), 1.0)
@@ -381,6 +389,15 @@ class IgnitionController:
             return
 
         if result is None:
+            if app.kill_on_iracing_exit:
+                existing_pid = find_pid_by_exe(app.executable_path)
+                if existing_pid:
+                    running = RunningApp(app=app, pid=existing_pid, started_at_monotonic=time.monotonic())
+                    with self._lock:
+                        self._running[app.app_id] = running
+                    self._log_event("skipped", app.name, f"Already running — tracking for exit (pid {existing_pid})")
+                    logger.info("Tracking already-running: %s (pid=%s)", app.name, existing_pid)
+                    return
             self._log_event("skipped", app.name, "Skipped (already running)")
             logger.info("Skipped (already running): %s", app.name)
             return
@@ -396,25 +413,65 @@ class IgnitionController:
         with self._lock:
             running_apps = list(self._running.values())
             self._running.clear()
+            dead_apps = list(self._dead_tracked_apps)
+            self._dead_tracked_apps.clear()
 
         for running in running_apps:
             if not running.app.kill_on_iracing_exit and reason == "iracing-exit":
                 continue
             try:
-                self._terminate(running)
-                self._log_event("stop", running.app.name, f"Stopped (pid {running.pid})")
-                logger.info("Stopped: %s (pid=%s)", running.app.name, running.pid)
+                found = self._terminate(running)
+                if found:
+                    self._log_event("stop", running.app.name, f"Stopped (pid {running.pid})")
+                    logger.info("Stopped: %s (pid=%s)", running.app.name, running.pid)
+                else:
+                    self._log_event("stop", running.app.name, "Stopped (already exited)")
+                    logger.info("Already exited: %s (pid=%s)", running.app.name, running.pid)
             except Exception:
                 self._log_event("error", running.app.name, "Failed to stop")
                 logger.exception("Failed to stop: %s (pid=%s)", running.app.name, running.pid)
 
+        for running in dead_apps:
+            if not running.app.kill_on_iracing_exit and reason == "iracing-exit":
+                continue
+            grace = float(running.app.shutdown_grace_seconds or 0.0)
+            try:
+                if running.app.track_process_name:
+                    found = kill_by_process_name(running.app.track_process_name, grace)
+                    label = f"process name ({running.app.track_process_name})"
+                else:
+                    found = kill_by_exe_path(running.app.executable_path, grace)
+                    label = "exe path"
+                if found:
+                    self._log_event("stop", running.app.name, f"Stopped (by {label})")
+                    logger.info("Stopped by %s: %s", label, running.app.name)
+            except Exception:
+                self._log_event("error", running.app.name, "Failed to stop")
+                logger.exception("Failed to stop: %s", running.app.name)
+
     @staticmethod
-    def _terminate(running: RunningApp) -> None:
+    def _terminate(running: RunningApp) -> bool:
+        """Kill the tracked process. Returns True if a live process was found and killed.
+
+        When the stored PID is stale, falls back in order:
+        1. track_process_name (if configured)
+        2. exe path (including Squirrel subdirectory matching)
+        """
         grace = float(running.app.shutdown_grace_seconds or 0.0)
+        try:
+            proc = psutil.Process(running.pid)
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                raise psutil.NoSuchProcess(running.pid)
+        except psutil.NoSuchProcess:
+            if running.app.track_process_name:
+                return kill_by_process_name(running.app.track_process_name, grace)
+            return kill_by_exe_path(running.app.executable_path, grace)
+
         if running.app.kill_process_tree:
             graceful_terminate_process_tree(running.pid, grace)
         else:
             graceful_terminate_process(running.pid, grace)
+        return True
 
     def _find_app(self, app_id: str) -> ManagedApp | None:
         profile = self._get_active_profile()
