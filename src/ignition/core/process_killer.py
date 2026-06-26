@@ -125,6 +125,9 @@ def kill_by_exe_path(exe_path: str, grace_seconds: float) -> bool:
         target = normalize_windows_path(exe_path)
         target_name = os.path.basename(target)
         target_dir = os.path.dirname(target)
+        target_dir_prefix = (
+            target_dir + os.sep if target_dir and os.path.isabs(target) else None
+        )
     except Exception:
         return False
 
@@ -138,8 +141,9 @@ def kill_by_exe_path(exe_path: str, grace_seconds: float) -> bool:
             if normalized == target:
                 pids.append(int(proc.info["pid"]))
             elif (
-                os.path.basename(normalized) == target_name
-                and normalized.startswith(target_dir + os.sep)
+                target_dir_prefix
+                and os.path.basename(normalized) == target_name
+                and normalized.startswith(target_dir_prefix)
             ):
                 pids.append(int(proc.info["pid"]))
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
